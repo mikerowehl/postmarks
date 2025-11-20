@@ -87,29 +87,17 @@ open({
   db = dBase;
 
   try {
+    await db.run(
+      'CREATE TABLE IF NOT EXISTS bookmarks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, url TEXT, description TEXT, tags TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);',
+    );
+
+    await db.run(
+      'CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, url TEXT, content TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, visible integer BOOLEAN DEFAULT 0 NOT NULL CHECK (visible IN (0,1)), bookmark_id INTEGER, FOREIGN KEY(bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE);',
+    );
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS comments_url ON comments(url)');
+
     if (!exists) {
-      // eslint-disable-next-line no-bitwise
-      const newDb = new sqlite3.Database(dbFile, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
-        if (err) {
-          throw new Error(`unable to open or create database: ${err}`);
-        }
-      });
-
-      newDb.close();
-
-      // now do it again, using the async/await library
-      await open({
-        filename: dbFile,
-        driver: sqlite3.Database,
-      }).then(async () => {
-        db = dBase;
-      });
-
       // Database doesn't exist yet - create Bookmarks table
-      await db.run(
-        'CREATE TABLE bookmarks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, url TEXT, description TEXT, tags TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);',
-      );
-
       // Add default choices to table
       const defaults = [
         {
@@ -131,11 +119,6 @@ open({
           tags: '#postmarks #default',
         },
       ];
-
-      await db.run(
-        'CREATE TABLE comments (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, url TEXT, content TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, visible integer BOOLEAN DEFAULT 0 NOT NULL CHECK (visible IN (0,1)), bookmark_id INTEGER, FOREIGN KEY(bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE);',
-      );
-      await db.run('CREATE UNIQUE INDEX comments_url ON comments(url)');
 
       const defaultsAsValuesList = defaults.map((b) => `('${b.title}', '${b.url}', '${b.description}', '${b.tags}')`).join(', ');
       db.run(`INSERT INTO bookmarks (title, url, description, tags) VALUES ${defaultsAsValuesList}`);
