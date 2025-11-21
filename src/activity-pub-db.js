@@ -9,7 +9,8 @@ import * as path from 'path';
 import fs from 'fs';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
-import crypto from 'crypto';
+import crypto from 'node:crypto';
+import { promisify } from 'node:util';
 import { account, domain, actorInfo, dataDir } from './util.js';
 
 const dbFile = `${dataDir}/activitypub.db`;
@@ -155,6 +156,8 @@ export async function findMessage(object) {
   return db?.all('select * from messages where message like ?', `%${object}%`);
 }
 
+const generateKeyPair = promisify(crypto.generateKeyPair);
+
 async function firstTimeSetup(actorName) {
   await db.run(
     'CREATE TABLE IF NOT EXISTS accounts (name TEXT PRIMARY KEY, privkey TEXT, pubkey TEXT, webfinger TEXT, actor TEXT, followers TEXT, following TEXT, messages TEXT, blocks TEXT)',
@@ -165,41 +168,31 @@ async function firstTimeSetup(actorName) {
   await db.run('CREATE TABLE IF NOT EXISTS messages (guid TEXT PRIMARY KEY, message TEXT, bookmark_id INTEGER)');
   await db.run('CREATE TABLE IF NOT EXISTS permissions (bookmark_id INTEGER NOT NULL UNIQUE, allowed TEXT, blocked TEXT)');
 
-  return new Promise((resolve, reject) => {
-    crypto.generateKeyPair(
-      'rsa',
-      {
-        modulusLength: 4096,
-        publicKeyEncoding: {
-          type: 'spki',
-          format: 'pem',
-        },
-        privateKeyEncoding: {
-          type: 'pkcs8',
-          format: 'pem',
-        },
+  const existingActor = await getActor();
+  if (!existingActor) {
+    const { publicKey, privateKey } = await generateKeyPair('rsa', {
+      modulusLength: 4096,
+      publicKeyEncoding: {
+        type: 'spki',
+        format: 'pem',
       },
-      async (err, publicKey, privateKey) => {
-        if (err) return reject(err);
-        try {
-          const actorRecord = actorJson(publicKey);
-          const webfingerRecord = webfingerJson();
+      privateKeyEncoding: {
+        type: 'pkcs8',
+        format: 'pem',
+      },
+    });
+    const actorRecord = actorJson(publicKey);
+    const webfingerRecord = webfingerJson();
 
-          await db.run(
-            'INSERT OR REPLACE INTO accounts (name, actor, pubkey, privkey, webfinger) VALUES (?, ?, ?, ?, ?)',
-            actorName,
-            JSON.stringify(actorRecord),
-            publicKey,
-            privateKey,
-            JSON.stringify(webfingerRecord),
-          );
-          return resolve();
-        } catch (e) {
-          return reject(e);
-        }
-      },
+    await db.run(
+      'INSERT OR REPLACE INTO accounts (name, actor, pubkey, privkey, webfinger) VALUES (?, ?, ?, ?, ?)',
+      actorName,
+      JSON.stringify(actorRecord),
+      publicKey,
+      privateKey,
+      JSON.stringify(webfingerRecord),
     );
-  });
+  }
 }
 
 function setup() {
@@ -207,9 +200,6 @@ function setup() {
   if (actorInfo.disabled) {
     return;
   }
-
-  // Initialize the database
-  const exists = fs.existsSync(dbFile);
 
   open({
     filename: dbFile,
@@ -220,9 +210,7 @@ function setup() {
     const actorName = `${account}@${domain}`;
 
     try {
-      if (!exists) {
-        await firstTimeSetup(actorName);
-      }
+      await firstTimeSetup(actorName);
 
       // re-run the profile portion of the actor setup every time in case the avatar, description, etc have changed
       const publicKey = await getPublicKey();
